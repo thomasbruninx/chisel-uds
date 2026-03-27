@@ -18,25 +18,60 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-//Config a Tunnel
+// Config a Tunnel
 type Config struct {
 	*cio.Logger
-	Inbound   bool
-	Outbound  bool
-	Socks     bool
-	KeepAlive time.Duration
-	//ACL optionally checks if a given address (host:port) is allowed.
-	//When set, outbound connections are denied if this returns false.
-	ACL func(addr string) bool
+	Inbound               bool
+	Outbound              bool
+	Socks                 bool
+	KeepAlive             time.Duration
+	SessionID             string
+	OnEndpointStateChange func(EndpointStateChange)
+	OnStreamEvent         func(StreamEvent)
 }
 
-//Tunnel represents an SSH tunnel with proxy capabilities.
-//Both chisel client and server are Tunnels.
-//chisel client has a single set of remotes, whereas
-//chisel server has multiple sets of remotes (one set per client).
-//Each remote has a 1:1 mapping to a proxy.
-//Proxies listen, send data over ssh, and the other end of the ssh connection
-//communicates with the endpoint and returns the response.
+type EndpointState string
+
+const (
+	EndpointStatePending EndpointState = "pending"
+	EndpointStateActive  EndpointState = "active"
+	EndpointStateFailed  EndpointState = "failed"
+	EndpointStateClosed  EndpointState = "closed"
+)
+
+type EndpointStateChange struct {
+	SessionID  string
+	Descriptor string
+	State      EndpointState
+	Error      string
+}
+
+type StreamState string
+
+const (
+	StreamStateAccepted StreamState = "accepted"
+	StreamStateOpen     StreamState = "open"
+	StreamStateError    StreamState = "error"
+	StreamStateClosed   StreamState = "closed"
+)
+
+type StreamEvent struct {
+	SessionID  string
+	Descriptor string
+	Protocol   string
+	ConnID     int
+	State      StreamState
+	Error      string
+	Time       time.Time
+}
+
+// Tunnel represents an SSH tunnel with proxy capabilities.
+// Both chisel client and server are Tunnels.
+// chisel client has a single set of remotes, whereas
+// chisel server has multiple sets of remotes (one set per client).
+// Each remote has a 1:1 mapping to a proxy.
+// Proxies listen, send data over ssh, and the other end of the ssh connection
+// communicates with the endpoint and returns the response.
 type Tunnel struct {
 	Config
 	//ssh connection
@@ -50,7 +85,7 @@ type Tunnel struct {
 	socksServer *socks5.Server
 }
 
-//New Tunnel from the given Config
+// New Tunnel from the given Config
 func New(c Config) *Tunnel {
 	c.Logger = c.Logger.Fork("tun")
 	t := &Tunnel{
@@ -71,7 +106,7 @@ func New(c Config) *Tunnel {
 	return t
 }
 
-//BindSSH provides an active SSH for use for tunnelling
+// BindSSH provides an active SSH for use for tunnelling
 func (t *Tunnel) BindSSH(ctx context.Context, c ssh.Conn, reqs <-chan *ssh.Request, chans <-chan ssh.NewChannel) error {
 	//link ctx to ssh-conn
 	go func() {
@@ -107,7 +142,7 @@ func (t *Tunnel) BindSSH(ctx context.Context, c ssh.Conn, reqs <-chan *ssh.Reque
 	return err
 }
 
-//getSSH blocks while connecting
+// getSSH blocks while connecting
 func (t *Tunnel) getSSH(ctx context.Context) ssh.Conn {
 	//cancelled already?
 	if isDone(ctx) {
@@ -143,8 +178,8 @@ func (t *Tunnel) activatingConnWait() <-chan struct{} {
 	return ch
 }
 
-//BindRemotes converts the given remotes into proxies, and blocks
-//until the caller cancels the context or there is a proxy error.
+// BindRemotes converts the given remotes into proxies, and blocks
+// until the caller cancels the context or there is a proxy error.
 func (t *Tunnel) BindRemotes(ctx context.Context, remotes []*settings.Remote) error {
 	if len(remotes) == 0 {
 		return errors.New("no remotes")
@@ -154,7 +189,10 @@ func (t *Tunnel) BindRemotes(ctx context.Context, remotes []*settings.Remote) er
 	}
 	proxies := make([]*Proxy, len(remotes))
 	for i, remote := range remotes {
-		p, err := NewProxy(t.Logger, t, t.proxyCount, remote)
+		p, err := NewProxy(
+			t.Logger, t, t.proxyCount, remote, t.Config.SessionID,
+			t.Config.OnEndpointStateChange, t.Config.OnStreamEvent,
+		)
 		if err != nil {
 			return err
 		}

@@ -2,6 +2,7 @@ package chserver
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -10,6 +11,9 @@ import (
 	"github.com/jpillora/chisel/share/cnet"
 	"github.com/jpillora/chisel/share/settings"
 	"github.com/jpillora/chisel/share/tunnel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/sync/errgroup"
 )
@@ -50,9 +54,32 @@ func (s *Server) handleClientHandler(w http.ResponseWriter, r *http.Request) {
 // handleWebsocket is responsible for handling the websocket connection
 func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	id := atomic.AddInt32(&s.sessCount, 1)
+	sessionID := strconv.Itoa(int(id))
+	s.markSessionPending(sessionID, req.RemoteAddr)
+	sessionCtx := req.Context()
+	endSpan := func(error) {}
+	if s.otel != nil {
+		var span trace.Span
+		sessionCtx, span = s.otel.tracer.Start(req.Context(), "chisel.session.handshake", trace.WithAttributes(
+			attribute.String("session.id", sessionID),
+			attribute.String("net.peer", req.RemoteAddr),
+		))
+		span.AddEvent("websocket.handshake.begin")
+		endSpan = func(err error) {
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+			} else {
+				span.SetStatus(codes.Ok, "ok")
+			}
+			span.End()
+		}
+	}
 	l := s.Fork("session#%d", id)
 	wsConn, err := upgrader.Upgrade(w, req, nil)
 	if err != nil {
+		s.markSessionFailed(sessionID, err.Error())
+		endSpan(err)
 		l.Debugf("Failed to upgrade (%s)", err)
 		return
 	}
@@ -61,6 +88,8 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	l.Debugf("Handshaking with %s...", req.RemoteAddr)
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshConfig)
 	if err != nil {
+		s.markSessionFailed(sessionID, err.Error())
+		endSpan(err)
 		s.Debugf("Failed to handshake (%s)", err)
 		return
 	}
@@ -83,11 +112,15 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	select {
 	case r = <-reqs:
 	case <-time.After(settings.EnvDuration("CONFIG_TIMEOUT", 10*time.Second)):
+		s.markSessionFailed(sessionID, "Timeout waiting for configuration")
+		endSpan(s.Errorf("timeout waiting for configuration"))
 		l.Debugf("Timeout waiting for configuration")
 		sshConn.Close()
 		return
 	}
 	failed := func(err error) {
+		s.markSessionFailed(sessionID, err.Error())
+		endSpan(err)
 		l.Debugf("Failed: %s", err)
 		r.Reply(false, []byte(err.Error()))
 	}
@@ -134,19 +167,26 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	}
 	//successfuly validated config!
 	r.Reply(true, nil)
+	s.markSessionConnected(sessionID)
+	endSpan(nil)
+	endSpan = func(error) {}
+	if s.otel != nil {
+		_, span := s.otel.tracer.Start(sessionCtx, "chisel.session.config.validated", trace.WithAttributes(
+			attribute.String("session.id", sessionID),
+		))
+		span.End()
+	}
 	//tunnel per ssh connection
-	tunnelConfig := tunnel.Config{
-		Logger:    l,
-		Inbound:   s.config.Reverse,
-		Outbound:  true, //server always accepts outbound
-		Socks:     s.config.Socks5,
-		KeepAlive: s.config.KeepAlive,
-	}
-	//enforce ACL on every channel, not just the initial config
-	if user != nil {
-		tunnelConfig.ACL = user.HasAccess
-	}
-	tunnel := tunnel.New(tunnelConfig)
+	tunnel := tunnel.New(tunnel.Config{
+		Logger:                l,
+		Inbound:               s.config.Reverse,
+		Outbound:              true, //server always accepts outbound
+		Socks:                 s.config.Socks5,
+		KeepAlive:             s.config.KeepAlive,
+		SessionID:             sessionID,
+		OnEndpointStateChange: s.onEndpointStateChange,
+		OnStreamEvent:         s.onStreamEvent,
+	})
 	//bind
 	eg, ctx := errgroup.WithContext(req.Context())
 	eg.Go(func() error {
@@ -168,4 +208,5 @@ func (s *Server) handleWebsocket(w http.ResponseWriter, req *http.Request) {
 	} else {
 		l.Debugf("Closed connection")
 	}
+	s.markSessionDisconnected(sessionID)
 }

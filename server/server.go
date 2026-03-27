@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -23,15 +24,17 @@ import (
 
 // Config is the configuration for the chisel service
 type Config struct {
-	KeySeed   string
-	KeyFile   string
-	AuthFile  string
-	Auth      string
-	Proxy     string
-	Socks5    bool
-	Reverse   bool
-	KeepAlive time.Duration
-	TLS       TLSConfig
+	KeySeed      string
+	KeyFile      string
+	AuthFile     string
+	Auth         string
+	Proxy        string
+	Socks5       bool
+	Reverse      bool
+	KeepAlive    time.Duration
+	TLS          TLSConfig
+	OTELEnabled  bool
+	OTELEndpoint string
 }
 
 // Server respresent a chisel service
@@ -45,6 +48,10 @@ type Server struct {
 	sessions     *settings.Users
 	sshConfig    *ssh.ServerConfig
 	users        *settings.UserIndex
+	monitor      *monitorState
+	otel         *otelPublisher
+	otelShutdown func(context.Context) error
+	closeOnce    sync.Once
 }
 
 var upgrader = websocket.Upgrader{
@@ -60,9 +67,18 @@ func NewServer(c *Config) (*Server, error) {
 		httpServer: cnet.NewHTTPServer(),
 		Logger:     cio.NewLogger("server"),
 		sessions:   settings.NewUsers(),
+		monitor:    newMonitorState(),
 	}
 	server.Info = true
 	server.users = settings.NewUserIndex(server.Logger)
+	if c.OTELEnabled {
+		otelPub, shutdown, err := newOTELPublisher(server.Logger, c.OTELEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		server.otel = otelPub
+		server.otelShutdown = shutdown
+	}
 	if c.AuthFile != "" {
 		if err := server.users.LoadUsers(c.AuthFile); err != nil {
 			return nil, err
@@ -187,12 +203,28 @@ func (s *Server) Wait() error {
 
 // Close forcibly closes the http server
 func (s *Server) Close() error {
-	return s.httpServer.Close()
+	var closeErr error
+	s.closeOnce.Do(func() {
+		closeErr = s.httpServer.Close()
+		if s.otelShutdown != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := s.otelShutdown(ctx); err != nil && closeErr == nil {
+				closeErr = err
+			}
+		}
+	})
+	return closeErr
 }
 
 // GetFingerprint is used to access the server fingerprint
 func (s *Server) GetFingerprint() string {
 	return s.fingerprint
+}
+
+// MonitorSnapshot returns a copy of monitor session/endpoint telemetry.
+func (s *Server) MonitorSnapshot() MonitorSnapshot {
+	return s.monitor.snapshot()
 }
 
 // authUser is responsible for validating the ssh user / password combination

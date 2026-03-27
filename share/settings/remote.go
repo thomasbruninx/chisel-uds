@@ -4,6 +4,8 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,15 +38,27 @@ type Remote struct {
 	LocalHost, LocalPort, LocalProto    string
 	RemoteHost, RemotePort, RemoteProto string
 	Socks, Reverse, Stdio               bool
+	UDSMode, UDSSocketPath              string
 }
 
 const revPrefix = "R:"
+const (
+	UDSModeNone   = ""
+	UDSModeListen = "uds-listen"
+	UDSModePair   = "uds-pair"
+)
 
 func DecodeRemote(s string) (*Remote, error) {
 	reverse := false
 	if strings.HasPrefix(s, revPrefix) {
 		s = strings.TrimPrefix(s, revPrefix)
 		reverse = true
+	}
+	if strings.HasPrefix(s, UDSModeListen+":") || strings.HasPrefix(s, UDSModePair+":") {
+		return decodeUDSRemote(s, reverse)
+	}
+	if reverse && strings.HasPrefix(s, "uds-") {
+		return nil, errors.New("Invalid unix remote mode")
 	}
 	parts := regexp.MustCompile(`(\[[^\[\]]+\]|[^\[\]:]+):?`).FindAllStringSubmatch(s, -1)
 	if len(parts) <= 0 || len(parts) >= 5 {
@@ -132,6 +146,53 @@ func DecodeRemote(s string) (*Remote, error) {
 	return r, nil
 }
 
+func decodeUDSRemote(s string, reverse bool) (*Remote, error) {
+	if !reverse {
+		return nil, errors.New("unix domain socket remotes require reverse mode")
+	}
+	mode := UDSModeNone
+	if strings.HasPrefix(s, UDSModeListen+":") {
+		mode = UDSModeListen
+	} else if strings.HasPrefix(s, UDSModePair+":") {
+		mode = UDSModePair
+	}
+	if mode != UDSModeListen && mode != UDSModePair {
+		return nil, errors.New("Invalid unix remote mode")
+	}
+	rest := strings.TrimPrefix(s, mode+":")
+	pathSep := strings.Index(rest, ":")
+	if pathSep <= 0 || pathSep >= len(rest)-1 {
+		return nil, errors.New("Invalid remote")
+	}
+	socketPath := strings.TrimSpace(rest[:pathSep])
+	targetHostPort := strings.TrimSpace(rest[pathSep+1:])
+	remoteHost, remotePort, err := net.SplitHostPort(targetHostPort)
+	if err != nil {
+		return nil, errors.New("Invalid remote target host:port")
+	}
+	if strings.Contains(remoteHost, ":") && !strings.HasPrefix(remoteHost, "[") {
+		remoteHost = "[" + remoteHost + "]"
+	}
+	if socketPath == "" {
+		return nil, errors.New("Missing unix socket path")
+	}
+	if remoteHost == "" || !isHost(remoteHost) {
+		return nil, errors.New("Invalid host")
+	}
+	if !isPort(remotePort) {
+		return nil, errors.New("Missing ports")
+	}
+	return &Remote{
+		Reverse:       true,
+		UDSMode:       mode,
+		UDSSocketPath: socketPath,
+		LocalProto:    "unix",
+		RemoteHost:    remoteHost,
+		RemotePort:    remotePort,
+		RemoteProto:   "tcp",
+	}, nil
+}
+
 func isPort(s string) bool {
 	n, err := strconv.Atoi(s)
 	if err != nil {
@@ -153,7 +214,7 @@ func isHost(s string) bool {
 
 var l4Proto = regexp.MustCompile(`(?i)\/(tcp|udp)$`)
 
-//L4Proto extacts the layer-4 protocol from the given string
+// L4Proto extacts the layer-4 protocol from the given string
 func L4Proto(s string) (head, proto string) {
 	if l4Proto.MatchString(s) {
 		l := len(s)
@@ -162,8 +223,18 @@ func L4Proto(s string) (head, proto string) {
 	return s, ""
 }
 
-//implement Stringer
+// implement Stringer
 func (r Remote) String() string {
+	if r.IsUDS() {
+		sb := strings.Builder{}
+		sb.WriteString(revPrefix)
+		sb.WriteString(r.UDSMode)
+		sb.WriteString(":")
+		sb.WriteString(r.UDSSocketPath)
+		sb.WriteString("=>")
+		sb.WriteString(strings.TrimPrefix(r.Remote(), "127.0.0.1:"))
+		return sb.String()
+	}
 	sb := strings.Builder{}
 	if r.Reverse {
 		sb.WriteString(revPrefix)
@@ -177,8 +248,12 @@ func (r Remote) String() string {
 	return sb.String()
 }
 
-//Encode remote to a string
+// Encode remote to a string
 func (r Remote) Encode() string {
+	if r.IsUDS() {
+		remote := r.Remote()
+		return revPrefix + r.UDSMode + ":" + r.UDSSocketPath + ":" + remote
+	}
 	if r.LocalPort == "" {
 		r.LocalPort = r.RemotePort
 	}
@@ -193,8 +268,11 @@ func (r Remote) Encode() string {
 	return local + ":" + remote
 }
 
-//Local is the decodable local portion
+// Local is the decodable local portion
 func (r Remote) Local() string {
+	if r.IsUDS() {
+		return r.UDSSocketPath
+	}
 	if r.Stdio {
 		return "stdio"
 	}
@@ -204,7 +282,7 @@ func (r Remote) Local() string {
 	return r.LocalHost + ":" + r.LocalPort
 }
 
-//Remote is the decodable remote portion
+// Remote is the decodable remote portion
 func (r Remote) Remote() string {
 	if r.Socks {
 		return "socks"
@@ -215,17 +293,28 @@ func (r Remote) Remote() string {
 	return r.RemoteHost + ":" + r.RemotePort
 }
 
-//UserAddr is checked when checking if a
-//user has access to a given remote
+// UserAddr is checked when checking if a
+// user has access to a given remote
 func (r Remote) UserAddr() string {
+	if r.IsUDS() {
+		return "R:" + r.UDSMode + ":" + r.UDSSocketPath
+	}
 	if r.Reverse {
 		return "R:" + r.LocalHost + ":" + r.LocalPort
 	}
 	return r.RemoteHost + ":" + r.RemotePort
 }
 
-//CanListen checks if the port can be listened on
+// CanListen checks if the port can be listened on
 func (r Remote) CanListen() bool {
+	if r.IsUDS() {
+		if r.UDSMode == UDSModePair {
+			return validateSocketPath(r.UDSSocketPath) == nil
+		}
+		// for uds-listen validate path readiness; actual listener setup
+		// handles stale socket cleanup and permissions.
+		return validateSocketPath(r.UDSSocketPath) == nil
+	}
 	//valid protocols
 	switch r.LocalProto {
 	case "tcp":
@@ -251,9 +340,27 @@ func (r Remote) CanListen() bool {
 	return false
 }
 
+func (r Remote) IsUDS() bool {
+	return r.UDSMode == UDSModeListen || r.UDSMode == UDSModePair
+}
+
+func validateSocketPath(socketPath string) error {
+	if strings.TrimSpace(socketPath) == "" {
+		return errors.New("empty socket path")
+	}
+	dir := filepath.Dir(socketPath)
+	if dir == "." {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
 type Remotes []*Remote
 
-//Filter out forward reversed/non-reversed remotes
+// Filter out forward reversed/non-reversed remotes
 func (rs Remotes) Reversed(reverse bool) Remotes {
 	subset := Remotes{}
 	for _, r := range rs {
@@ -265,7 +372,7 @@ func (rs Remotes) Reversed(reverse bool) Remotes {
 	return subset
 }
 
-//Encode back into strings
+// Encode back into strings
 func (rs Remotes) Encode() []string {
 	s := make([]string, len(rs))
 	for i, r := range rs {
