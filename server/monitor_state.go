@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jpillora/chisel/share/tunnel"
+	"github.com/thomasbruninx/chisel-uds/share/tunnel"
 )
 
 type SessionStatus string

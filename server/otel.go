@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jpillora/chisel/share/cio"
-	"github.com/jpillora/chisel/share/tunnel"
+	"github.com/thomasbruninx/chisel-uds/share/cio"
+	"github.com/thomasbruninx/chisel-uds/share/tunnel"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -81,8 +81,8 @@ func newOTELPublisher(logger *cio.Logger, endpoint string) (*otelPublisher, func
 	otel.SetMeterProvider(meterProvider)
 
 	p := &otelPublisher{
-		tracer:            tracerProvider.Tracer("github.com/jpillora/chisel/server"),
-		meter:             meterProvider.Meter("github.com/jpillora/chisel/server"),
+		tracer:            tracerProvider.Tracer("github.com/thomasbruninx/chisel-uds/server"),
+		meter:             meterProvider.Meter("github.com/thomasbruninx/chisel-uds/server"),
 		sessionStartedAt:  map[string]time.Time{},
 		endpointPendingAt: map[string]time.Time{},
 		streamOpenAt:      map[string]time.Time{},

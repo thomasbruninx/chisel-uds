@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	chserver "github.com/jpillora/chisel/server"
-	"github.com/jpillora/chisel/share/cnet"
-	"github.com/jpillora/chisel/share/settings"
+	chserver "github.com/thomasbruninx/chisel-uds/server"
+	"github.com/thomasbruninx/chisel-uds/share/cnet"
+	"github.com/thomasbruninx/chisel-uds/share/settings"
 
 	"github.com/gorilla/websocket"
 	"golang.org/x/crypto/ssh"

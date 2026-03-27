@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	chclient "github.com/jpillora/chisel/client"
-	chserver "github.com/jpillora/chisel/server"
-	chshare "github.com/jpillora/chisel/share"
-	"github.com/jpillora/chisel/share/ccrypto"
-	"github.com/jpillora/chisel/share/cos"
-	"github.com/jpillora/chisel/share/settings"
+	chclient "github.com/thomasbruninx/chisel-uds/client"
+	chserver "github.com/thomasbruninx/chisel-uds/server"
+	chshare "github.com/thomasbruninx/chisel-uds/share"
+	"github.com/thomasbruninx/chisel-uds/share/ccrypto"
+	"github.com/thomasbruninx/chisel-uds/share/cos"
+	"github.com/thomasbruninx/chisel-uds/share/settings"
 )
 
 var help = `
@@ -29,7 +29,7 @@ var help = `
     client - runs chisel in client mode
 
   Read more:
-    https://github.com/jpillora/chisel
+    https://github.com/thomasbruninx/chisel-uds
 
 `
 
@@ -82,7 +82,7 @@ var commonHelp = `
     ` + chshare.BuildVersion + ` (` + runtime.Version() + `)
 
   Read more:
-    https://github.com/jpillora/chisel
+    https://github.com/thomasbruninx/chisel-uds
 
 `
 

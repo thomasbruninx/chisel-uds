@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jpillora/chisel/share/cio"
-	"github.com/jpillora/chisel/share/settings"
+	"github.com/thomasbruninx/chisel-uds/share/cio"
+	"github.com/thomasbruninx/chisel-uds/share/settings"
 )
 
 func TestUDSListenProxyForwardsAndCleansSocket(t *testing.T) {

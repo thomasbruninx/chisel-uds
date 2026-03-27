@@ -1,6 +1,6 @@
 # Chisel-UDS 
 
-Fork of [Chisel by Jaime Pillora, v1.11.5](https://github.com/jpillora/chisel/tree/v1.11.5) with support for Unix Domain Socket and additional telemetry integration.
+Fork of Chisel by Jaime Pillora (upstream v1.11.5 baseline) with support for Unix Domain Socket and additional telemetry integration.
 
 ## Fork-Specific Additions
 
@@ -57,11 +57,11 @@ Primary implementation is in `server/otel.go`.
 
 ## Changelog
 
-- `1.0` - Fork of [Chisel by Jaime Pillora, v1.11.5](https://github.com/jpillora/chisel/tree/v1.11.5), added Unix Domain Socket support and telemetry improvements
+- `1.0` - Fork of Chisel by Jaime Pillora (upstream v1.11.5 baseline), added Unix Domain Socket support and telemetry improvements
 ## License
 
-Chisal itself is protected by the MIT license 
-[Chisal - Jaime Pillora - MIT](https://github.com/jpillora/chisel/blob/master/LICENSE) © Jaime Pillora
+Chisal itself is protected by the MIT license.
+Original Chisel project by Jaime Pillora (MIT) © Jaime Pillora.
 
 My additions are also protected by the MIT license
 [Chisal-UDS - Thomas Bruninx - MIT](https://github.com/thomasbruninx/chisel-uds/blob/master/LICENSE) © Thomas Bruninx

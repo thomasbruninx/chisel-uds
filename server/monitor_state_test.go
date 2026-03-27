@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jpillora/chisel/share/tunnel"
+	"github.com/thomasbruninx/chisel-uds/share/tunnel"
 )
 
 func TestMonitorStateSessionLifecycle(t *testing.T) {

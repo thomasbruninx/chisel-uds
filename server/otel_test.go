@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jpillora/chisel/share/tunnel"
+	"github.com/thomasbruninx/chisel-uds/share/tunnel"
 )
 
 func TestOTELPublisherSessionAndEndpointDurationsTracked(t *testing.T) {

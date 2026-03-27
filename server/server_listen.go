@@ -9,7 +9,7 @@ import (
 	"os/user"
 	"path/filepath"
 
-	"github.com/jpillora/chisel/share/settings"
+	"github.com/thomasbruninx/chisel-uds/share/settings"
 	"golang.org/x/crypto/acme/autocert"
 )
 
