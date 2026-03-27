@@ -1,4 +1,4 @@
-module github.com/jpillora/chisel
+module github.com/thomasbruninx/chisel-uds
 
 go 1.25
 
